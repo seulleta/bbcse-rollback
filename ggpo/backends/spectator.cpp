@@ -76,7 +76,7 @@ SpectatorBackend::SyncInput(void *values,
       return GGPO_ERRORCODE_GENERAL_FAILURE;
    }
 
-   if (size < _input_size * _num_players) {
+   if (!values || size < _input_size * _num_players || _input_size * _num_players > (int)sizeof(input.bits)) {
       return GGPO_ERRORCODE_INVALID_REQUEST;
    }
    memcpy(values, input.bits, _input_size * _num_players);
@@ -158,6 +158,9 @@ SpectatorBackend::OnUdpProtocolEvent(UdpProtocol::Event &evt)
 
    case UdpProtocol::Event::Input:
       GameInput& input = evt.u.input.input;
+      if (input.frame < 0) {
+         break;
+      }
 
       _host.SetLocalFrameNumber(input.frame);
       _host.SendInputAck();

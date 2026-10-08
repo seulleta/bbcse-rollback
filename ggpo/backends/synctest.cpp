@@ -41,6 +41,11 @@ SyncTestBackend::SyncTestBackend(GGPOSessionCallbacks *cb,
 
 SyncTestBackend::~SyncTestBackend()
 {
+   EndLog();
+   while (!_saved_frames.empty()) {
+      free(_saved_frames.front().buf);
+      _saved_frames.pop();
+   }
 }
 
 GGPOErrorCode
@@ -97,6 +102,12 @@ SyncTestBackend::SyncInput(void *values,
       }
       _last_input = _current_input;
    }
+   if (!values || size <= 0) {
+      return GGPO_ERRORCODE_INVALID_REQUEST;
+   }
+   if (size > (int)sizeof(_last_input.bits)) {
+      size = sizeof(_last_input.bits);
+   }
    memcpy(values, _last_input.bits, size);
    if (disconnect_flags) {
       *disconnect_flags = 0;
@@ -125,8 +136,15 @@ SyncTestBackend::IncrementFrame(void)
    info.frame = frame;
    info.input = _last_input;
    info.cbuf = _sync.GetLastSavedFrame().cbuf;
-   info.buf = (char *)malloc(info.cbuf);
-   memcpy(info.buf, _sync.GetLastSavedFrame().buf, info.cbuf);
+   if (info.cbuf > 0 && _sync.GetLastSavedFrame().buf) {
+      info.buf = (char *)malloc(info.cbuf);
+      if (info.buf) {
+         memcpy(info.buf, _sync.GetLastSavedFrame().buf, info.cbuf);
+      }
+   } else {
+      info.buf = NULL;
+      info.cbuf = 0;
+   }
    info.checksum = _sync.GetLastSavedFrame().checksum;
    _saved_frames.push(info);
 

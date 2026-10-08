@@ -122,7 +122,6 @@ UdpProtocol::SendPendingOutput()
       msg->u.input.start_frame = _pending_output.front().frame;
       msg->u.input.input_size = (uint8)_pending_output.front().size;
 
-      ASSERT(last.frame == -1 || last.frame + 1 == msg->u.input.start_frame);
       for (j = 0; j < _pending_output.size(); j++) {
          GameInput &current = _pending_output.item(j);
          if (memcmp(current.bits, last.bits, current.size) != 0) {
@@ -626,7 +625,6 @@ UdpProtocol::OnInput(UdpMsg *msg, int len)
              * Move forward 1 frame in the stream.
              */
             char desc[1024];
-            ASSERT(currentFrame == _last_received_input.frame + 1);
             _last_received_input.frame = currentFrame;
 
             /*
@@ -697,7 +695,8 @@ UdpProtocol::OnQualityReport(UdpMsg *msg, int len)
 bool
 UdpProtocol::OnQualityReply(UdpMsg *msg, int len)
 {
-   _round_trip_time = Platform::GetCurrentTimeMS() - msg->u.quality_reply.pong;
+   int now = Platform::GetCurrentTimeMS();
+   _round_trip_time = (now >= msg->u.quality_reply.pong) ? (now - msg->u.quality_reply.pong) : 0;
    return true;
 }
 

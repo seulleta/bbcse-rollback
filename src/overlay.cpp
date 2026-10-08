@@ -26,6 +26,7 @@ static void Init(IDirect3DDevice9* dev) {
 }
 
 static void Row(const char* label, const char* fmt, ...) {
+	if (!label || !fmt) return;
 	ImGui::TextUnformatted(label);
 	ImGui::SameLine(170);
 	va_list a;
@@ -80,9 +81,8 @@ void Overlay_OnPresent(IDirect3DDevice9* dev) {
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
 	Draw();
-	ImGui::EndFrame();
+	ImGui::Render();
 	if (SUCCEEDED(dev->BeginScene())) {
-		ImGui::Render();
 		ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
 		dev->EndScene();
 	}

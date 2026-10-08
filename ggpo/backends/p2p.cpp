@@ -65,6 +65,9 @@ Peer2PeerBackend::AddRemotePlayer(char *ip,
                                   uint16 port,
                                   int queue)
 {
+   if (queue < 0 || queue >= _num_players) {
+      return;
+   }
    /*
     * Start the state machine (xxx: no)
     */
@@ -493,6 +496,9 @@ Peer2PeerBackend::DisconnectPlayer(GGPOPlayerHandle player)
 void
 Peer2PeerBackend::DisconnectPlayerQueue(int queue, int syncto)
 {
+   if (queue < 0 || queue >= _num_players) {
+      return;
+   }
    GGPOEvent info;
    int framecount = _sync.GetFrameCount();
 
@@ -504,7 +510,7 @@ Peer2PeerBackend::DisconnectPlayerQueue(int queue, int syncto)
    _local_connect_status[queue].disconnected = 1;
    _local_connect_status[queue].last_frame = syncto;
 
-   if (syncto < framecount) {
+   if (syncto >= 0 && syncto < framecount) {
       Log("adjusting simulation to account for the fact that %d disconnected @ %d.\n", queue, syncto);
       _sync.AdjustSimulation(syncto);
       Log("finished adjusting simulation.\n");

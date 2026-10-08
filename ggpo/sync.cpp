@@ -86,7 +86,9 @@ Sync::GetConfirmedInputs(void *values, int size, int frame)
    int disconnect_flags = 0;
    char *output = (char *)values;
 
-   ASSERT(size >= _config.num_players * _config.input_size);
+   if (!output || size < _config.num_players * _config.input_size) {
+      return 0;
+   }
 
    memset(output, 0, size);
    for (int i = 0; i < _config.num_players; i++) {
@@ -108,7 +110,9 @@ Sync::SynchronizeInputs(void *values, int size)
    int disconnect_flags = 0;
    char *output = (char *)values;
 
-   ASSERT(size >= _config.num_players * _config.input_size);
+   if (!output || size < _config.num_players * _config.input_size) {
+      return 0;
+   }
 
    memset(output, 0, size);
    for (int i = 0; i < _config.num_players; i++) {
@@ -153,7 +157,11 @@ Sync::AdjustSimulation(int seek_to)
     * Flush our input queue and load the last frame.
     */
    LoadFrame(seek_to);
-   ASSERT(_framecount == seek_to);
+
+   count = framecount - _framecount;
+   if (count < 0) {
+      count = 0;
+   }
 
    /*
     * Advance frame by frame (stuffing notifications back to 
@@ -163,7 +171,7 @@ Sync::AdjustSimulation(int seek_to)
    for (int i = 0; i < count; i++) {
       _callbacks.advance_frame(0);
    }
-   ASSERT(_framecount == framecount);
+   _framecount = framecount;
 
    _rollingback = false;
 

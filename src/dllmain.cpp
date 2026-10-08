@@ -135,6 +135,7 @@ int P1FrameCounter() {
 }
 
 bool Pressed(int vk, int slot) {
+	if (slot < 0 || slot >= 10) return false;
 	DWORD pid = 0;
 	GetWindowThreadProcessId(GetForegroundWindow(), &pid);
 	const bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(vk) & 0x8000);
@@ -643,8 +644,9 @@ void LoadState() {
 		}
 	}
 	for (int i = 0; i < kRegions; ++i) {
-		memcpy(r[i].addr, g_snap.data[i].data(), r[i].size);
-		const bool same = memcmp(r[i].addr, g_snap.data[i].data(), r[i].size) == 0;
+		const size_t copySize = (g_snap.data[i].size() < r[i].size) ? g_snap.data[i].size() : r[i].size;
+		memcpy(r[i].addr, g_snap.data[i].data(), copySize);
+		const bool same = memcmp(r[i].addr, g_snap.data[i].data(), copySize) == 0;
 		Log("  load %-6s hash %08X %s", r[i].name, Fnv(r[i].addr, r[i].size), same ? "byte-exact" : "MISMATCH");
 	}
 	RestoreCtrls(g_ctrlSnap);
@@ -765,6 +767,7 @@ DWORD g_frameIdx = 0, g_endFrame = 0;
 std::vector<std::array<DWORD, kMaxCtrls>> g_rec;
 
 int CtrlIndex(int* obj) {
+	if (!obj) return -1;
 	for (int i = 0; i < g_ctrlCount; ++i)
 		if (g_ctrls[i] == obj) return i;
 	if (g_ctrlCount < kMaxCtrls) { g_ctrls[g_ctrlCount] = obj; return g_ctrlCount++; }
@@ -779,6 +782,7 @@ LONG g_realFrame = -1;
 LONG g_resimPolls = 0;
 
 DWORD __fastcall HookPoll(int* obj) {
+	if (!obj || !g_origPoll) return 0;
 	if (g_netActive && g_netInUpdate) {
 		const int side = NetSideOf(obj);
 		if (side >= 0) {
@@ -822,6 +826,7 @@ std::string CaptureCtrls() {
 	std::string out;
 	for (int i = 0; i < g_ctrlCount; ++i) {
 		const BYTE* obj = reinterpret_cast<const BYTE*>(g_ctrls[i]);
+		if (!obj) continue;
 		out.append(reinterpret_cast<const char*>(obj), kCtrlHeader);
 		const BYTE* node = *reinterpret_cast<BYTE* const*>(obj + 0x20);
 		for (int n = 0; n < kRingNodes && node; ++n) {
@@ -834,12 +839,14 @@ std::string CaptureCtrls() {
 
 void RestoreCtrls(const std::string& s) {
 	const char* p = s.data();
-	for (int i = 0; i < g_ctrlCount && p < s.data() + s.size(); ++i) {
+	const char* end = s.data() + s.size();
+	for (int i = 0; i < g_ctrlCount && p + kCtrlHeader <= end; ++i) {
 		BYTE* obj = reinterpret_cast<BYTE*>(g_ctrls[i]);
+		if (!obj) break;
 		memcpy(obj, p, kCtrlHeader);
 		p += kCtrlHeader;
 		BYTE* node = *reinterpret_cast<BYTE**>(obj + 0x20);
-		for (int n = 0; n < kRingNodes && node; ++n) {
+		for (int n = 0; n < kRingNodes && node && p + 8 <= end; ++n) {
 			memcpy(node + 0xC, p, 8);
 			p += 8;
 			node = *reinterpret_cast<BYTE**>(node + 4);
@@ -1573,7 +1580,7 @@ void ImportSteamCloudCopy(void* storage) {
 	using SteamUser_t = void*(__cdecl*)();
 	const auto steamUser = reinterpret_cast<SteamUser_t>(GetProcAddress(GetModuleHandleA("steam_api.dll"), "SteamUser"));
 	void* user = steamUser ? steamUser() : nullptr;
-	if (!user) return;
+	if (!user || !*reinterpret_cast<BYTE**>(user)) return;
 	unsigned long long id = 0;
 	using GetSteamID_t = unsigned long long*(__fastcall*)(void* self, void* edx, unsigned long long* out);
 	(*reinterpret_cast<GetSteamID_t*>(*reinterpret_cast<BYTE**>(user) + 8))(user, nullptr, &id);
@@ -1591,10 +1598,12 @@ void PatchCloudSlot(void** vt, int slot, void* fn) {
 	VirtualProtect(&vt[slot], sizeof(void*), old, &old);
 }
 void* __cdecl HookSteamRemoteStorage() {
+	if (!g_origRemoteStorage) return nullptr;
 	void* storage = g_origRemoteStorage();
 	if (storage && !g_cloudHooked) {
-		g_cloudHooked = true;
 		void** vt = *reinterpret_cast<void***>(storage);
+		if (!vt) return storage;
+		g_cloudHooked = true;
 		PatchCloudSlot(vt, 0, reinterpret_cast<void*>(&CloudFileWrite));
 		PatchCloudSlot(vt, 1, reinterpret_cast<void*>(&CloudFileRead));
 		PatchCloudSlot(vt, 3, reinterpret_cast<void*>(&CloudFileDelete));
@@ -1741,6 +1750,7 @@ double NowMs() {
 }
 
 int* CtrlForSide(int side) {
+	if (side < 0 || side >= 2) return nullptr;
 	const int idx = *reinterpret_cast<int*>(Live(kGameMgr) + kSideSlotOff + 4 * side);
 	BYTE* list = *reinterpret_cast<BYTE**>(Live(kCtrlListPtr));
 	return (list && idx >= 0 && idx < 2) ? *reinterpret_cast<int**>(list + 0x20 + 4 * idx) : nullptr;
@@ -1763,10 +1773,11 @@ DWORD ReadLocalMask() {
 		const int side = *reinterpret_cast<int*>(Live(kGameMgr) + kLocalSideOff);
 		c = CtrlForSide(side == 1 ? 1 : 0);
 	}
-	if (!c) return 0;
+	if (!c || !*reinterpret_cast<BYTE**>(c)) return 0;
 	DWORD m = 0;
 	const auto query = *reinterpret_cast<Button_t*>(*reinterpret_cast<BYTE**>(c) + 8);
 	const int* ids = reinterpret_cast<const int*>(c[0xD]);
+	if (!query || !ids) return 0;
 	for (int i = 0; i < c[0xE] && i < 32; ++i)
 		if (query(c, nullptr, ids[i])) m |= 1u << i;
 	if ((m & 1) && (m & 4)) m &= ~5u;
@@ -1839,6 +1850,9 @@ void SendSyncHash(int frame, DWORD hash);
 
 void LogConfirmedSync() {
 	const int confirmed = ggpo_get_confirmed_frame(g_net.session);
+	if (g_nextSyncLog < confirmed - kSyncRing * kSyncEvery) {
+		g_nextSyncLog = ((confirmed - kSyncRing * kSyncEvery) / kSyncEvery) * kSyncEvery;
+	}
 	while (g_nextSyncLog <= confirmed && g_nextSyncLog <= g_net.frame) {
 		const SyncMark& m = g_syncMarks[(g_nextSyncLog / kSyncEvery) % kSyncRing];
 		if (m.frame == g_nextSyncLog) {
@@ -1969,6 +1983,7 @@ int __cdecl SteamRecv(char* buf, int cap) {
 bool SteamMode() { return g_net.session && g_net.steam; }
 
 BYTE* NetPeer(int side) {
+	if (side < 0 || side > 1) return nullptr;
 	return *reinterpret_cast<BYTE**>(Live(kNetSession) + 0x12048 + 4 * side);
 }
 
@@ -1988,6 +2003,7 @@ void* __fastcall HookNetWait(void* self, void* edx, int arg) {
 }
 
 int AppliedInputWord(int side) {
+	if (side < 0 || side >= 2) return -1;
 	BYTE* gm = Live(kGameMgr);
 	const int slot = *reinterpret_cast<int*>(gm + kSideSlotOff + 4 * side);
 	if (slot < 0) return -1;
@@ -2014,8 +2030,9 @@ void __fastcall HookNetIndex(void* netstate, void* edx) {
 
 void LogNetCounters(const char* who) {
 	BYTE* ses = Live(kNetSession);
-	BYTE* self = *reinterpret_cast<BYTE**>(ses + 0x12040);
 	const unsigned round = ses[0x11AAA];
+	if (round > 10) return;
+	BYTE* self = *reinterpret_cast<BYTE**>(ses + 0x12040);
 	const unsigned idx = *reinterpret_cast<WORD*>(ses + 0x11AB2);
 	const unsigned c0 = *reinterpret_cast<WORD*>(ses + 0x160 + (0 + 36000 + round * 2) * 2);
 	const unsigned c1 = *reinterpret_cast<WORD*>(ses + 0x160 + (1 + 36000 + round * 2) * 2);
@@ -2143,7 +2160,7 @@ bool g_desyncDumped = false;
 int g_lastMatched = -1;
 
 void SendSyncHash(int frame, DWORD hash) {
-	if (!g_net.steam || !g_steamNet) return;
+	if (!g_net.steam || !g_steamNet || !g_steamPeer) return;
 	const DWORD msg[3] = {0x48535942 , static_cast<DWORD>(frame), hash};
 	g_steamNet->Send(g_steamPeer, msg, sizeof(msg), 2 , kHashChannel);
 }
@@ -2227,6 +2244,9 @@ void NetStop() {
 	PaceReset();
 	ggpo_bb_send = nullptr;
 	ggpo_bb_recv = nullptr;
+	g_steamNet = nullptr;
+	g_steamPeer = 0;
+	g_heldPackets.clear();
 	g_netActive = false;
 	Log("NET: session closed");
 }
@@ -2280,6 +2300,11 @@ void NetBattleStart() {
 		char* colon = strrchr(remote, ':');
 		if (!colon) { Log("NET: remote must be ip:port, got '%s'; network off", remote); return; }
 		*colon = 0;
+		const int peerPort = atoi(colon + 1);
+		if (colon == remote || peerPort <= 0 || peerPort > 65535) {
+			Log("NET: invalid remote address or port; network off");
+			return;
+		}
 		if (strlen(remote) >= sizeof(them.u.remote.ip_address)) {
 			Log("NET: remote ip/host too long; network off");
 			return;
@@ -2292,7 +2317,7 @@ void NetBattleStart() {
 		ggpo_set_disconnect_notify_start(g_net.session, 1000);
 		them.type = GGPO_PLAYERTYPE_REMOTE;
 		strcpy_s(them.u.remote.ip_address, remote);
-		them.u.remote.port = static_cast<unsigned short>(atoi(colon + 1));
+		them.u.remote.port = static_cast<unsigned short>(peerPort);
 		if (!GGPO_SUCCEEDED(ggpo_add_player(g_net.session, &me, &g_net.local)) ||
 		    !GGPO_SUCCEEDED(ggpo_add_player(g_net.session, &them, &g_net.remote))) {
 			Log("NET: add_player failed; network off");
@@ -2332,7 +2357,7 @@ void NetRoundEnd() {
 	ggpo_idle(g_net.session, 0);
 	Log("NET: round end at frame %d, confirmed %d after %lu ms; scene state %d", g_net.frame,
 		ggpo_get_confirmed_frame(g_net.session), GetTickCount() - start,
-		*reinterpret_cast<int*>(static_cast<BYTE*>(g_sceneForSlots) + kSceneStateOff));
+		g_sceneForSlots ? *reinterpret_cast<int*>(static_cast<BYTE*>(g_sceneForSlots) + kSceneStateOff) : -1);
 	if (SceneFighting()) {
 		Log("NET: that round end was a misprediction; the fight continues");
 		return;
@@ -2870,10 +2895,17 @@ extern "C" void __cdecl ggpo_bb_sync_error(const char* msg) {
 }
 
 BOOL APIENTRY DllMain(HMODULE self, DWORD reason, LPVOID) {
+	if (reason == DLL_PROCESS_DETACH) {
+		for (Slot* s : g_slotFree) delete s;
+		g_slotFree.clear();
+		if (g_log) { fclose(g_log); g_log = nullptr; }
+		return TRUE;
+	}
 	if (reason != DLL_PROCESS_ATTACH) {
 		return TRUE;
 	}
 
+	g_base = reinterpret_cast<BYTE*>(GetModuleHandleA(nullptr));
 	DisableThreadLibraryCalls(self);
 
 	const std::string logPath = ModuleDir(self) + "bbcse-probe.log";
