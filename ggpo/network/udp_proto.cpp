@@ -314,7 +314,16 @@ UdpProtocol::OnMsg(UdpMsg *msg, int len)
       &UdpProtocol::OnInputAck,            /* InputAck */
    };
 
-   if (len < (int)sizeof(msg->hdr) || msg->hdr.type >= ARRAY_SIZE(table)) {
+   // bbcse: validate before anything reads the message. Every field below comes from the
+   // peer; a short, oversized or unknown packet is dropped instead of being decoded (an
+   // Invalid type used to reach OnInvalid's ASSERT, which exits the game).
+   if (len < (int)sizeof(msg->hdr) || msg->hdr.type == UdpMsg::Invalid || msg->hdr.type >= ARRAY_SIZE(table)) {
+      return;
+   }
+   if (msg->hdr.type == UdpMsg::Input && msg->u.input.num_bits > MAX_COMPRESSED_BITS) {
+      return;
+   }
+   if (len < msg->PacketSize()) {
       return;
    }
 
@@ -338,7 +347,11 @@ UdpProtocol::OnMsg(UdpMsg *msg, int len)
 
    _next_recv_seq = seq;
    LogMsg("recv", msg);
-   handled = (this->*(table[msg->hdr.type]))(msg, len);
+   if (msg->hdr.type >= ARRAY_SIZE(table)) {
+      OnInvalid(msg, len);
+   } else {
+      handled = (this->*(table[msg->hdr.type]))(msg, len);
+   }
    if (handled) {
       _last_recv_time = Platform::GetCurrentTimeMS();
       if (_disconnect_notify_sent && _current_state == Running) {
@@ -448,7 +461,6 @@ UdpProtocol::LogMsg(const char *prefix, UdpMsg *msg)
    default:
       Log("%s unknown msg type (%d).\n", prefix, msg->hdr.type);
       break;
-   }
 }
 
 void
@@ -521,18 +533,6 @@ UdpProtocol::OnSyncReply(UdpMsg *msg, int len)
 bool
 UdpProtocol::OnInput(UdpMsg *msg, int len)
 {
-   const int hdr_size = static_cast<int>((reinterpret_cast<const uint8*>(msg->u.input.bits)) - reinterpret_cast<const uint8*>(msg));
-   if (len < hdr_size) {
-      return false;
-   }
-   if (msg->u.input.input_size > sizeof(_last_received_input.bits)) {
-      return false;
-   }
-   const int avail_bytes = len - hdr_size;
-   if (msg->u.input.num_bits > avail_bytes * 8 || msg->u.input.num_bits > MAX_COMPRESSED_BITS) {
-      return false;
-   }
-
    /*
     * If a disconnect is requested, go ahead and disconnect now.
     */
@@ -550,6 +550,7 @@ UdpProtocol::OnInput(UdpMsg *msg, int len)
        */
       UdpMsg::connect_status* remote_status = msg->u.input.peer_connect_status;
       for (int i = 0; i < ARRAY_SIZE(_peer_connect_status); i++) {
+         // bbcse: was ASSERT (peer data): an older status is simply not applied (MAX below)
          _peer_connect_status[i].disconnected = _peer_connect_status[i].disconnected || remote_status[i].disconnected;
          _peer_connect_status[i].last_frame = MAX(_peer_connect_status[i].last_frame, remote_status[i].last_frame);
       }
@@ -565,6 +566,10 @@ UdpProtocol::OnInput(UdpMsg *msg, int len)
       int numBits = msg->u.input.num_bits;
       int currentFrame = msg->u.input.start_frame;
 
+      // bbcse: the size comes from the peer; out of range = not a real input packet
+      if (msg->u.input.input_size == 0 || msg->u.input.input_size > (int)sizeof(_last_received_input.bits)) {
+         return true;
+      }
       _last_received_input.size = msg->u.input.input_size;
       if (_last_received_input.frame < 0) {
          _last_received_input.frame = msg->u.input.start_frame - 1;
@@ -575,15 +580,24 @@ UdpProtocol::OnInput(UdpMsg *msg, int len)
           * the inputs for the frame right after the one we're on.
           */
          if (currentFrame > (_last_received_input.frame + 1)) {
-            return false;
+            break;  // bbcse: was ASSERT (peer data): a gap in the stream, drop the rest
          }
          bool useInputs = currentFrame == _last_received_input.frame + 1;
 
-         while (BitVector_ReadBit(bits, &offset)) {
+         // bbcse: every read stays inside num_bits (a change = 1 more bit + a
+         // BITVECTOR_NIBBLE_SIZE-bit button index), and the button index stays inside
+         // GameInput::bits: set()/clear() do no bounds check, so a crafted index from the
+         // peer wrote past the end of the input (memory corruption).
+         while (offset < numBits && BitVector_ReadBit(bits, &offset)) {
+            if (offset + 1 + BITVECTOR_NIBBLE_SIZE > numBits) {
+               offset = numBits + 1;
+               break;
+            }
             int on = BitVector_ReadBit(bits, &offset);
             int button = BitVector_ReadNibblet(bits, &offset);
-            if (button < 0 || button >= static_cast<int>(sizeof(_last_received_input.bits) * 8)) {
-               return false;
+            if (button < 0 || button >= (int)sizeof(_last_received_input.bits) * 8) {
+               offset = numBits + 1;
+               break;
             }
             if (useInputs) {
                if (on) {
@@ -594,7 +608,7 @@ UdpProtocol::OnInput(UdpMsg *msg, int len)
             }
          }
          if (offset > numBits) {
-            return false;
+            break;  // bbcse: was ASSERT (peer data): truncated input stream
          }
 
          /*
@@ -606,9 +620,7 @@ UdpProtocol::OnInput(UdpMsg *msg, int len)
              * Move forward 1 frame in the stream.
              */
             char desc[1024];
-            if (currentFrame != _last_received_input.frame + 1) {
-               return false;
-            }
+            ASSERT(currentFrame == _last_received_input.frame + 1);
             _last_received_input.frame = currentFrame;
 
             /*
