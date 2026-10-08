@@ -130,6 +130,9 @@ UdpProtocol::SendPendingOutput()
             for (i = 0; i < current.size * 8; i++) {
                ASSERT(i < (1 << BITVECTOR_NIBBLE_SIZE));
                if (current.value(i) != last.value(i)) {
+                  if (offset + 2 + BITVECTOR_NIBBLE_SIZE >= MAX_COMPRESSED_BITS) {
+                     break;
+                  }
                   BitVector_SetBit(msg->u.input.bits, &offset);
                   (current.value(i) ? BitVector_SetBit : BitVector_ClearBit)(bits, &offset);
                   BitVector_WriteNibblet(bits, i, &offset);
@@ -153,7 +156,9 @@ UdpProtocol::SendPendingOutput()
       memset(msg->u.input.peer_connect_status, 0, sizeof(UdpMsg::connect_status) * UDP_MSG_MAX_PLAYERS);
    }
 
-   ASSERT(offset < MAX_COMPRESSED_BITS);
+   if (offset >= MAX_COMPRESSED_BITS) {
+      offset = MAX_COMPRESSED_BITS - 1;
+   }
 
    SendMsg(msg);
 }
@@ -459,7 +464,8 @@ UdpProtocol::LogMsg(const char *prefix, UdpMsg *msg)
       Log("%s input ack.\n", prefix);
       break;
    default:
-      ASSERT(FALSE && "Unknown UdpMsg type.");
+      Log("%s unknown msg type (%d).\n", prefix, msg->hdr.type);
+      break;
    }
 }
 
@@ -476,7 +482,7 @@ UdpProtocol::LogEvent(const char *prefix, const UdpProtocol::Event &evt)
 bool
 UdpProtocol::OnInvalid(UdpMsg *msg, int len)
 {
-   ASSERT(FALSE && "Invalid msg in UdpProtocol");
+   Log("Invalid msg in UdpProtocol (type %d, len %d).\n", msg ? msg->hdr.type : -1, len);
    return false;
 }
 
@@ -646,7 +652,9 @@ UdpProtocol::OnInput(UdpMsg *msg, int len)
          currentFrame++;
       }
    }
-   ASSERT(_last_received_input.frame >= last_received_frame_number);
+   if (_last_received_input.frame < last_received_frame_number) {
+      return false;
+   }
 
    /*
     * Get rid of our buffered input
@@ -769,7 +777,11 @@ UdpProtocol::PumpSendQueue()
          _oo_packet.msg = entry.msg;
          _oo_packet.dest_addr = entry.dest_addr;
       } else {
-         ASSERT(entry.dest_addr.sin_addr.s_addr);
+         if (!entry.dest_addr.sin_addr.s_addr && !ggpo_bb_send) {
+            delete entry.msg;
+            _send_queue.pop();
+            continue;
+         }
 
          _udp->SendTo((char *)entry.msg, entry.msg->PacketSize(), 0,
                       (struct sockaddr *)&entry.dest_addr, sizeof entry.dest_addr);

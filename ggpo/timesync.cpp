@@ -21,7 +21,9 @@ TimeSync::~TimeSync()
 void
 TimeSync::advance_frame(GameInput &input, int advantage, int radvantage)
 {
-   // Remember the last frame and frame advantage
+   if (input.frame < 0) {
+      return;
+   }
    _last_inputs[input.frame % ARRAY_SIZE(_last_inputs)] = input;
    _local[input.frame % ARRAY_SIZE(_local)] = advantage;
    _remote[input.frame % ARRAY_SIZE(_remote)] = radvantage;

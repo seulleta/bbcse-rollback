@@ -76,7 +76,9 @@ SpectatorBackend::SyncInput(void *values,
       return GGPO_ERRORCODE_GENERAL_FAILURE;
    }
 
-   ASSERT(size >= _input_size * _num_players);
+   if (size < _input_size * _num_players) {
+      return GGPO_ERRORCODE_INVALID_REQUEST;
+   }
    memcpy(values, input.bits, _input_size * _num_players);
    if (disconnect_flags) {
       *disconnect_flags = 0; // xxx: should get them from the host!

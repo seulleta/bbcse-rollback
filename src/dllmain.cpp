@@ -328,7 +328,8 @@ void ScanSave(const Region r[kRegions]) {
 	AllocationOf(r[1].addr, hs, hn);
 	g_scan[1] = {"heap", hs, hn, {}};
 	for (auto& a : g_scan) {
-		a.copy.assign(reinterpret_cast<char*>(a.addr), a.size);
+		if (a.addr && a.size) a.copy.assign(reinterpret_cast<char*>(a.addr), a.size);
+		else a.copy.clear();
 		Log("  scan %-4s %p size 0x%X", a.name, a.addr, a.size);
 	}
 }
@@ -575,20 +576,32 @@ void CaptureParticles(ParticleSnap& p) {
 }
 bool RestoreParticles(const ParticleSnap& p) {
 	if (!p.valid || !g_poolsKnown) return false;
-	memcpy(Live(kParticleReg), p.hdr, kParticleRegSize);
 	const char* in = p.data.data();
+	const char* const end = in + p.data.size();
+	if (p.data.size() < kFxArraySize) return false;
+	memcpy(Live(kParticleReg), p.hdr, kParticleRegSize);
 	memcpy(g_fxArray, in, kFxArraySize);
 	in += kFxArraySize;
-	for (int i = 1; i < 3; ++i)
-		for (BYTE* n : g_poolNodes[i]) { memcpy(n, in, kPools[i].slotSize); in += kPools[i].slotSize; }
+	for (int i = 1; i < 3; ++i) {
+		for (BYTE* n : g_poolNodes[i]) {
+			if (in + kPools[i].slotSize > end) return false;
+			memcpy(n, in, kPools[i].slotSize);
+			in += kPools[i].slotSize;
+		}
+	}
 	const DWORD body = kPools[0].slotSize - kNodeHead;
 	const bool pristine = g_particlePristine.size() == g_poolNodes[0].size() * body;
 	for (size_t k = 0; k < g_poolNodes[0].size(); ++k) {
+		if (in + kNodeHead + 1 > end) return false;
 		BYTE* n = g_poolNodes[0][k];
 		memcpy(n, in, kNodeHead);
 		in += kNodeHead;
 		const bool wasFree = *in++ != 0;
-		if (!wasFree) { memcpy(n + kNodeHead, in, body); in += body; }
+		if (!wasFree) {
+			if (in + body > end) return false;
+			memcpy(n + kNodeHead, in, body);
+			in += body;
+		}
 		else if (pristine) memcpy(n + kNodeHead, g_particlePristine.data() + k * body, body);
 	}
 	return true;
@@ -883,13 +896,18 @@ bool SkipDword(const char* region, size_t off) {
 }
 
 void RestoreRegion(const Region& r, const std::string& saved) {
+	if (saved.size() < r.size) return;
 	constexpr size_t kN = sizeof(kLiveFields) / sizeof(kLiveFields[0]);
 	BYTE keep[kN][0x40];
-	for (size_t i = 0; i < kN; ++i)
-		if (strcmp(r.name, kLiveFields[i].region) == 0) memcpy(keep[i], r.addr + kLiveFields[i].off, kLiveFields[i].len);
+	for (size_t i = 0; i < kN; ++i) {
+		const size_t len = kLiveFields[i].len > 0x40 ? 0x40 : kLiveFields[i].len;
+		if (strcmp(r.name, kLiveFields[i].region) == 0) memcpy(keep[i], r.addr + kLiveFields[i].off, len);
+	}
 	memcpy(r.addr, saved.data(), r.size);
-	for (size_t i = 0; i < kN; ++i)
-		if (strcmp(r.name, kLiveFields[i].region) == 0) memcpy(r.addr + kLiveFields[i].off, keep[i], kLiveFields[i].len);
+	for (size_t i = 0; i < kN; ++i) {
+		const size_t len = kLiveFields[i].len > 0x40 ? 0x40 : kLiveFields[i].len;
+		if (strcmp(r.name, kLiveFields[i].region) == 0) memcpy(r.addr + kLiveFields[i].off, keep[i], len);
+	}
 }
 
 DWORD FastHash(const void* p, size_t n) {
@@ -1097,8 +1115,10 @@ void DumpSplit(const Slot& real, LONG frame, int step) {
 	auto block = [f](const char* name, DWORD addr, const std::string& a, const void* b, DWORD size) {
 		char nm[16] = {};
 		strncpy_s(nm, name, _TRUNCATE);
-		fwrite(nm, 1, 16, f); fwrite(&addr, 4, 1, f); fwrite(&size, 4, 1, f);
-		fwrite(a.data(), 1, size, f); fwrite(b, 1, size, f);
+		const DWORD actualSize = (a.size() < size) ? static_cast<DWORD>(a.size()) : size;
+		fwrite(nm, 1, 16, f); fwrite(&addr, 4, 1, f); fwrite(&actualSize, 4, 1, f);
+		if (actualSize && a.data()) fwrite(a.data(), 1, actualSize, f);
+		if (actualSize && b) fwrite(b, 1, actualSize, f);
 	};
 	for (int i = 0; i < kRegions; ++i)
 		block(r[i].name, static_cast<DWORD>(reinterpret_cast<UINT_PTR>(r[i].addr)), real.r[i], r[i].addr, r[i].size);
@@ -1488,7 +1508,7 @@ bool CloudName(const char* name, std::string& path) {
 }
 bool __fastcall CloudFileWrite(void*, void*, const char* name, const void* data, int size) {
 	std::string path;
-	if (!CloudName(name, path) || size < 0) return false;
+	if (!CloudName(name, path) || size < 0 || (size > 0 && !data)) return false;
 
 	const std::string tmp = path + ".tmp";
 	FILE* f = nullptr;
@@ -1504,7 +1524,7 @@ bool __fastcall CloudFileWrite(void*, void*, const char* name, const void* data,
 }
 int __fastcall CloudFileRead(void*, void*, const char* name, void* data, int cap) {
 	std::string path;
-	if (!CloudName(name, path) || cap <= 0) return 0;
+	if (!CloudName(name, path) || cap <= 0 || !data) return 0;
 	FILE* f = nullptr;
 	if (fopen_s(&f, path.c_str(), "rb") != 0 || !f) { Log("CLOUD: read %s: not found", name); return 0; }
 	const int got = static_cast<int>(fread(data, 1, static_cast<size_t>(cap), f));
@@ -1849,7 +1869,12 @@ bool __cdecl NetLoad(unsigned char* buf, int) {
 	return true;
 }
 bool __cdecl NetLogState(char*, unsigned char*, int) { return true; }
-void __cdecl NetFree(void* buf) { if (buf) g_slotFree.push_back(static_cast<Slot*>(buf)); }
+void __cdecl NetFree(void* buf) {
+	if (!buf) return;
+	Slot* s = static_cast<Slot*>(buf);
+	for (const Slot* p : g_slotFree) if (p == s) return;
+	g_slotFree.push_back(s);
+}
 
 constexpr DWORD kMatchMenuSite = 0x49801C, kMatchMenuFn = 0x56E400;
 using MatchMenu_t = int(__cdecl*)();
@@ -1911,6 +1936,7 @@ DWORD g_netStartTick = 0;
 bool g_netRealAdvance = false;
 
 int __cdecl SteamSend(const char* buf, int len) {
+	if (!g_steamNet || !g_steamPeer) return 0;
 	return g_steamNet->Send(g_steamPeer, buf, static_cast<unsigned>(len), 0 , kSteamChannel) ? len : 0;
 }
 
@@ -1919,6 +1945,7 @@ struct HeldPacket { DWORD due; std::string data; };
 std::vector<HeldPacket> g_heldPackets;
 
 int SteamRecvNow(char* buf, int cap) {
+	if (!g_steamNet) return 0;
 	unsigned size = 0, got = 0;
 	unsigned long long from = 0;
 	while (g_steamNet->Available(&size, kSteamChannel)) {
@@ -2122,6 +2149,7 @@ void SendSyncHash(int frame, DWORD hash) {
 }
 
 void DesyncDump(int frame, DWORD mine, DWORD theirs) {
+	if (frame < 0) return;
 	const SyncSnap& sn = g_syncSnaps[(frame / kSyncEvery) % kSnapRing];
 	Log("NET DESYNC: frame %d, my hash %08lX, peer %08lX", frame, mine, theirs);
 	g_ovl.desyncFrame = frame;
@@ -2158,8 +2186,10 @@ void PumpSyncHashes() {
 	while (g_steamNet->Available(&size, kHashChannel)) {
 		if (!g_steamNet->Read(msg, sizeof(msg), &got, &from, kHashChannel)) break;
 		if (from != g_steamPeer || got != sizeof(msg) || msg[0] != 0x48535942) continue;
-		PeerHash& ph = g_peerHashes[(msg[1] / kSyncEvery) % kSyncRing];
-		ph.frame = static_cast<int>(msg[1]);
+		const int frameNum = static_cast<int>(msg[1]);
+		if (frameNum < 0) continue;
+		PeerHash& ph = g_peerHashes[(frameNum / kSyncEvery) % kSyncRing];
+		ph.frame = frameNum;
 		ph.hash = msg[2];
 	}
 	if (g_desyncDumped) return;
@@ -2250,6 +2280,10 @@ void NetBattleStart() {
 		char* colon = strrchr(remote, ':');
 		if (!colon) { Log("NET: remote must be ip:port, got '%s'; network off", remote); return; }
 		*colon = 0;
+		if (strlen(remote) >= sizeof(them.u.remote.ip_address)) {
+			Log("NET: remote ip/host too long; network off");
+			return;
+		}
 		srand(GetTickCount() ^ GetCurrentProcessId());
 		WSADATA wsa;
 		WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -2531,7 +2565,7 @@ void __fastcall HookUpdateBattle(void* self, void* edx, int arg) {
 		DWORD frames = 0, ctrls = 0;
 		char magic[4] = {};
 		if (fopen_s(&f, kRecFile, "rb") == 0 && f && fread(magic, 1, 4, f) == 4 && memcmp(magic, "BBRC", 4) == 0 &&
-		    fread(&frames, 4, 1, f) == 1 && fread(&ctrls, 4, 1, f) == 1 && ctrls == kMaxCtrls) {
+		    fread(&frames, 4, 1, f) == 1 && fread(&ctrls, 4, 1, f) == 1 && ctrls == kMaxCtrls && frames > 0 && frames <= 1000000) {
 			g_rec.assign(frames, {});
 			for (auto& fr : g_rec) fread(fr.data(), 4, kMaxCtrls, f);
 			g_frameIdx = 0;
@@ -2665,14 +2699,15 @@ void WriteMiniDump(EXCEPTION_POINTERS* ep) {
 	using Dump_t = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, int, void*, void*, void*);
 	HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
 	const auto dump = dbghelp ? reinterpret_cast<Dump_t>(GetProcAddress(dbghelp, "MiniDumpWriteDump")) : nullptr;
-	if (!dump) return;
+	if (!dump) { if (dbghelp) FreeLibrary(dbghelp); return; }
 	const std::string path = g_crashDir + "bbcse-crash.dmp";
 	HANDLE f = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (f == INVALID_HANDLE_VALUE) return;
+	if (f == INVALID_HANDLE_VALUE) { FreeLibrary(dbghelp); return; }
 	struct { DWORD tid; EXCEPTION_POINTERS* ep; BOOL client; } info{GetCurrentThreadId(), ep, FALSE};
 
 	dump(GetCurrentProcess(), GetCurrentProcessId(), f, 0x40, &info, nullptr, nullptr);
 	CloseHandle(f);
+	FreeLibrary(dbghelp);
 }
 
 bool SafeReadDword(const BYTE* p, DWORD* v) {

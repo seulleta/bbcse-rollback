@@ -18,12 +18,16 @@ public:
    } 
 
    T& operator[](int i) {
-      ASSERT(i >= 0 && i < _size);
+      if (i < 0 || i >= _size) {
+         return _elements[0];
+      }
       return _elements[i];
    }
 
    void push_back(const T &t) {
-      ASSERT(_size != (N-1));
+      if (_size >= N) {
+         return;
+      }
       _elements[_size++] = t;
    }
 

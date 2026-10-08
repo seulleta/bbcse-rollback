@@ -20,23 +20,32 @@ public:
   } 
 
    T &front() {
-      ASSERT(_size != N);
+      if (_size == 0) {
+         return _elements[0];
+      }
       return _elements[_tail];
    }
    
    T &item(int i) {
-      ASSERT(i < _size);
+      if (i < 0 || i >= _size) {
+         return _elements[_tail];
+      }
       return _elements[(_tail + i) % N];
    }
 
    void pop() {
-      ASSERT(_size != N);
+      if (_size <= 0) {
+         return;
+      }
       _tail = (_tail + 1) % N;
       _size--;
    }
 
    void push(const T &t) {
-      ASSERT(_size != (N-1));
+      if (_size >= N) {
+         _tail = (_tail + 1) % N;
+         _size--;
+      }
       _elements[_head] = t;
       _head = (_head + 1) % N;
       _size++;

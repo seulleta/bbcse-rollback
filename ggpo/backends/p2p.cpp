@@ -124,8 +124,7 @@ Peer2PeerBackend::DoPoll(int timeout)
          }
 
          Log("last confirmed frame in p2p backend is %d.\n", total_min_confirmed);
-         if (total_min_confirmed >= 0) {
-            ASSERT(total_min_confirmed != INT_MAX);
+         if (total_min_confirmed >= 0 && total_min_confirmed != INT_MAX) {
             if (_num_spectators > 0) {
                while (_next_spectator_frame <= total_min_confirmed) {
                   Log("pushing frame %d to spectators.\n", _next_spectator_frame);

@@ -67,6 +67,7 @@ static void Draw() {
 }
 
 void Overlay_OnPresent(IDirect3DDevice9* dev) {
+	if (!dev || dev->TestCooperativeLevel() == D3DERR_DEVICELOST) return;
 	const bool f1 = (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
 	if (f1 && !s_f1Down) s_visible = !s_visible;
 	s_f1Down = f1;

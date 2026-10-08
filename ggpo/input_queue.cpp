@@ -131,7 +131,11 @@ InputQueue::GetInput(int requested_frame, GameInput *input)
     */
    _last_frame_requested = requested_frame;
 
-   ASSERT(requested_frame >= _inputs[_tail].frame);
+   if (requested_frame < _inputs[_tail].frame) {
+      *input = _inputs[_tail];
+      input->frame = requested_frame;
+      return true;
+   }
 
    if (_prediction.frame == GameInput::NullFrame) {
       /*
@@ -262,7 +266,10 @@ InputQueue::AddDelayedInputToQueue(GameInput &input, int frame_number)
          _prediction.frame++;
       }
    }
-   ASSERT(_length <= INPUT_QUEUE_LENGTH);
+   if (_length > INPUT_QUEUE_LENGTH) {
+      _tail = (_tail + 1) % INPUT_QUEUE_LENGTH;
+      _length = INPUT_QUEUE_LENGTH;
+   }
 }
 
 int

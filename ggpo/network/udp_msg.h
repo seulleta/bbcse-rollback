@@ -94,9 +94,9 @@ public:
          size = (int)((char *)&u.input.bits - (char *)&u.input);
          size += (u.input.num_bits + 7) / 8;
          return size;
+      default:
+         return 0;
       }
-      ASSERT(false);
-      return 0;
    }
 
    UdpMsg(MsgType t) { hdr.type = (uint8)t; }

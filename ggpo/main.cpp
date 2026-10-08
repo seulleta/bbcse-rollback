@@ -38,6 +38,9 @@ ggpo_start_session(GGPOSession **session,
                    int input_size,
                    unsigned short localport)
 {
+   if (!session || !cb) {
+      return GGPO_ERRORCODE_INVALID_REQUEST;
+   }
    *session= (GGPOSession *)new Peer2PeerBackend(cb,
                                                  game,
                                                  localport,
@@ -67,6 +70,9 @@ ggpo_start_synctest(GGPOSession **ggpo,
                     int input_size,
                     int frames)
 {
+   if (!ggpo || !cb) {
+      return GGPO_ERRORCODE_INVALID_REQUEST;
+   }
    *ggpo = (GGPOSession *)new SyncTestBackend(cb, game, frames, num_players);
    return GGPO_OK;
 }
@@ -191,6 +197,9 @@ GGPOErrorCode ggpo_start_spectating(GGPOSession **session,
                                     char *host_ip,
                                     unsigned short host_port)
 {
+   if (!session || !cb) {
+      return GGPO_ERRORCODE_INVALID_REQUEST;
+   }
    *session= (GGPOSession *)new SpectatorBackend(cb,
                                                  game,
                                                  local_port,

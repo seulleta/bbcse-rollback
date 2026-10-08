@@ -40,6 +40,9 @@ void Logv(const char *fmt, va_list args)
 
 void Logv(FILE *fp, const char *fmt, va_list args)
 {
+   if (!fp) {
+      return;
+   }
    if (Platform::GetConfigBool("ggpo.log.timestamps")) {
       static int start = 0;
       int t = 0;

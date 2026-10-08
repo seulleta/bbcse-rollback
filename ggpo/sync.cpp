@@ -186,11 +186,11 @@ Sync::LoadFrame(int frame)
    Log("=== Loading frame info %d (size: %d  checksum: %08x).\n",
        state->frame, state->cbuf, state->checksum);
 
-   ASSERT(state->buf && state->cbuf);
+   if (!state->buf || !state->cbuf) {
+      return;
+   }
    _callbacks.load_game_state(state->buf, state->cbuf);
 
-   // Reset framecount and the head of the state ring-buffer to point in
-   // advance of the current frame (as if we had just finished executing it).
    _framecount = state->frame;
    _savedstate.head = (_savedstate.head + 1) % ARRAY_SIZE(_savedstate.frames);
 }
@@ -198,10 +198,6 @@ Sync::LoadFrame(int frame)
 void
 Sync::SaveCurrentFrame()
 {
-   /*
-    * See StateCompress for the real save feature implemented by FinalBurn.
-    * Write everything into the head, then advance the head pointer.
-    */
    SavedFrame *state = _savedstate.frames + _savedstate.head;
    if (state->buf) {
       _callbacks.free_buffer(state->buf);
@@ -229,15 +225,25 @@ int
 Sync::FindSavedFrameIndex(int frame)
 {
    int i, count = ARRAY_SIZE(_savedstate.frames);
+   int best_idx = -1;
+   int best_dist = INT_MAX;
    for (i = 0; i < count; i++) {
       if (_savedstate.frames[i].frame == frame) {
-         break;
+         return i;
+      }
+      if (_savedstate.frames[i].frame >= 0) {
+         int dist = abs(_savedstate.frames[i].frame - frame);
+         if (dist < best_dist) {
+            best_dist = dist;
+            best_idx = i;
+         }
       }
    }
-   if (i == count) {
-      ASSERT(FALSE);
+   if (best_idx != -1) {
+      Log("FindSavedFrameIndex: frame %d not found, using closest frame %d\n", frame, _savedstate.frames[best_idx].frame);
+      return best_idx;
    }
-   return i;
+   return 0;
 }
 
 

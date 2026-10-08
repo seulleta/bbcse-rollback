@@ -25,7 +25,7 @@ BitVector_ClearBit(uint8 *vector, int *offset)
 void
 BitVector_WriteNibblet(uint8 *vector, int nibble, int *offset)
 {
-   ASSERT(nibble < (1 << BITVECTOR_NIBBLE_SIZE));
+   nibble &= ((1 << BITVECTOR_NIBBLE_SIZE) - 1);
    for (int i = 0; i < BITVECTOR_NIBBLE_SIZE; i++) {
       if (nibble & (1 << i)) {
          BitVector_SetBit(vector, offset);

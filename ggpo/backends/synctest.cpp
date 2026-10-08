@@ -74,6 +74,9 @@ SyncTestBackend::AddLocalInput(GGPOPlayerHandle player, void *values, int size)
    }
 
    int index = (int)player;
+   if (index < 0 || (index + 1) * size > (int)sizeof(_current_input.bits)) {
+      return GGPO_ERRORCODE_INVALID_REQUEST;
+   }
    for (int i = 0; i < size; i++) {
       _current_input.bits[(index * size) + i] |= ((char *)values)[i];
    }
